@@ -20,6 +20,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+__version__ = "1.2.3"  # Hoặc version bạn muốn
 from .kiss_icp import KISSConfig, KissICP, voxel_down_sample
 
 __all__ = ["KISSConfig", "KissICP", "voxel_down_sample"]
