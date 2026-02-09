@@ -46,6 +46,7 @@ dependencies = [
     "rich",
     "tqdm",
     "typer[all]>=0.6.0",
+    "polyscope",
 ]
 
 [project.optional-dependencies]
