@@ -8,9 +8,10 @@ from typing import Optional
 import numpy as np
 from pyquaternion import Quaternion
 
-# Import wrapper mới
+# Import wrapper
 from kiss_icp.kiss_icp import KissICP
-from kiss_icp.config import load_config, write_config
+# Import thêm to_kiss_config
+from kiss_icp.config import load_config, write_config, to_kiss_config 
 from kiss_icp.metrics import absolute_trajectory_error, sequence_error
 from kiss_icp.tools.pipeline_results import PipelineResults
 from kiss_icp.tools.progress_bar import get_progress_bar
@@ -38,8 +39,12 @@ class OdometryPipeline:
         self.config = load_config(config)
         self.results_dir = None
 
-        # Pipeline (Sử dụng wrapper mới từ kiss_icp.py)
-        self.odometry = KissICP(config=self.config)
+        # Pipeline
+        # --- SỬA ĐỔI QUAN TRỌNG Ở ĐÂY ---
+        # Chuyển đổi Pydantic Config -> Runtime Dataclass trước khi đưa vào Wrapper
+        self.odometry = KissICP(config=to_kiss_config(self.config))
+        # --------------------------------
+        
         self.results = PipelineResults()
         self.times = np.zeros(self._n_scans)
         self.poses = np.zeros((self._n_scans, 4, 4))
@@ -54,7 +59,16 @@ class OdometryPipeline:
 
         # Visualizer
         self.visualizer = Kissualizer() if visualize else StubVisualizer()
+        
+        # Vis Info (Lấy từ config Pydantic ban đầu vẫn OK)
+        self._vis_infos = {
+            "max_range": self.config.data.max_range,
+            "min_range": self.config.data.min_range,
+        }
+        if hasattr(self._dataset, "use_global_visualizer"):
+            self.visualizer._global_view = self._dataset.use_global_visualizer
 
+    # Public interface  ------
     def run(self):
         self._run_pipeline()
         self._run_evaluation()
@@ -63,37 +77,34 @@ class OdometryPipeline:
         self._write_gt_poses()
         self._write_cfg()
         self._write_log()
-        # --- Các hàm mới thêm vào giống GenZ ---
+        # Thêm các hàm export giống GenZ
         self._write_graph()
         self._write_trajectory_plot()
         self._write_local_maps()
-        # ---------------------------------------
         return self.results
 
+    # Private interface  ------
     def _run_pipeline(self):
-        vis_infos = {}
         for idx in get_progress_bar(self._first, self._last):
             raw_frame, timestamps = self._dataset[idx]
             start_time = time.perf_counter_ns()
             
-            # Gọi wrapper mới: Trả về (deskewed_frame, source_keypoints)
-            # Lưu ý: GenZ trả về (planar, non_planar), còn KISS trả về (frame, keypoints)
+            # Wrapper mới trả về source và keypoints
             source, keypoints = self.odometry.register_frame(raw_frame, timestamps)
             
             self.poses[idx - self._first] = self.odometry.last_pose
             self.times[idx - self._first] = time.perf_counter_ns() - start_time
 
-            # Tính FPS và hiển thị (Giống GenZ)
-            fps = self._get_fps()
-            vis_infos["FPS"] = int(np.floor(fps))
-            vis_infos["Keypoints"] = keypoints.shape[0]
+            # Update visualizer
+            self._vis_infos["FPS"] = int(np.floor(self._get_fps()))
+            self._vis_infos["Keypoints"] = keypoints.shape[0] # Thêm info số lượng điểm
 
             self.visualizer.update(
-                source,                  # Frame đã deskew (Màu đỏ)
-                keypoints,               # Điểm dùng để registration (Màu vàng)
-                self.odometry.local_map, # Map
-                self.odometry.last_pose, # Pose
-                vis_infos                # Info dict
+                source,
+                keypoints,
+                self.odometry.local_map,
+                self.odometry.last_pose,
+                self._vis_infos,
             )
 
         self.visualizer.close()
@@ -170,7 +181,6 @@ class OdometryPipeline:
         if avg_fps > 0:
             self.results.append(desc="Average Frequency", units="Hz", value=avg_fps, trunc=True)
             self.results.append(desc="Average Runtime", units="ms", value=avg_ms, trunc=True)
-
         self.results.append(desc="Number of closures found", units="closures", value=0, trunc=True)
 
     def _write_log(self):
@@ -197,8 +207,7 @@ class OdometryPipeline:
     def _create_output_dir(self):
         self.results_dir = self._get_results_dir(self.config.out_dir)
 
-    # --- CÁC HÀM MỚI TỪ GENZ ---
-    
+    # --- CÁC HÀM EXPORT GIỐNG GENZ ---
     def _write_graph(self):
         graph_file = os.path.join(self.results_dir, "trajectory.g2o")
         poses = self._calibrate_poses(self.poses)
@@ -236,5 +245,4 @@ class OdometryPipeline:
     def _write_local_maps(self):
         local_maps_dir = os.path.join(self.results_dir, "local_maps")
         os.makedirs(local_maps_dir, exist_ok=True)
-        # Lưu bản đồ local từ C++
         np.save(os.path.join(local_maps_dir, "local_map_final.npy"), self.odometry.local_map)
