@@ -21,4 +21,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .parser import KISSConfig, load_config, write_config
+# from .parser import KISSConfig, load_config, write_config
+from .config import AdaptiveThresholdConfig, DataConfig, MappingConfig, RegistrationConfig
+from .parser import KISSConfig, load_config, to_kiss_config, write_config
+
+__all__ = [
+    "AdaptiveThresholdConfig",
+    "DataConfig",
+    "MappingConfig",
+    "RegistrationConfig",
+    "KISSConfig",
+    "load_config",
+    "to_kiss_config",
+    "write_config",
+]
