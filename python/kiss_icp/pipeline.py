@@ -1,25 +1,3 @@
-# MIT License
-#
-# Copyright (c) 2022 Ignacio Vizzo, Tiziano Guadagnino, Benedikt Mersch, Cyrill
-# Stachniss.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
 import contextlib
 import datetime
 import os
@@ -30,8 +8,9 @@ from typing import Optional
 import numpy as np
 from pyquaternion import Quaternion
 
-from kiss_icp.config import load_config, write_config
+# Import wrapper mới
 from kiss_icp.kiss_icp import KissICP
+from kiss_icp.config import load_config, write_config
 from kiss_icp.metrics import absolute_trajectory_error, sequence_error
 from kiss_icp.tools.pipeline_results import PipelineResults
 from kiss_icp.tools.progress_bar import get_progress_bar
@@ -59,7 +38,7 @@ class OdometryPipeline:
         self.config = load_config(config)
         self.results_dir = None
 
-        # Pipeline
+        # Pipeline (Sử dụng wrapper mới từ kiss_icp.py)
         self.odometry = KissICP(config=self.config)
         self.results = PipelineResults()
         self.times = np.zeros(self._n_scans)
@@ -75,14 +54,7 @@ class OdometryPipeline:
 
         # Visualizer
         self.visualizer = Kissualizer() if visualize else StubVisualizer()
-        self._vis_infos = {
-            "max_range": self.config.data.max_range,
-            "min_range": self.config.data.min_range,
-        }
-        if hasattr(self._dataset, "use_global_visualizer"):
-            self.visualizer._global_view = self._dataset.use_global_visualizer
 
-    # Public interface  ------
     def run(self):
         self._run_pipeline()
         self._run_evaluation()
@@ -91,45 +63,55 @@ class OdometryPipeline:
         self._write_gt_poses()
         self._write_cfg()
         self._write_log()
+        # --- Các hàm mới thêm vào giống GenZ ---
+        self._write_graph()
+        self._write_trajectory_plot()
+        self._write_local_maps()
+        # ---------------------------------------
         return self.results
 
-    # Private interface  ------
     def _run_pipeline(self):
+        vis_infos = {}
         for idx in get_progress_bar(self._first, self._last):
             raw_frame, timestamps = self._dataset[idx]
             start_time = time.perf_counter_ns()
+            
+            # Gọi wrapper mới: Trả về (deskewed_frame, source_keypoints)
+            # Lưu ý: GenZ trả về (planar, non_planar), còn KISS trả về (frame, keypoints)
             source, keypoints = self.odometry.register_frame(raw_frame, timestamps)
+            
             self.poses[idx - self._first] = self.odometry.last_pose
             self.times[idx - self._first] = time.perf_counter_ns() - start_time
 
-            # Udate visualizer
-            self._vis_infos["FPS"] = int(np.floor(self._get_fps()))
+            # Tính FPS và hiển thị (Giống GenZ)
+            fps = self._get_fps()
+            vis_infos["FPS"] = int(np.floor(fps))
+            vis_infos["Keypoints"] = keypoints.shape[0]
+
             self.visualizer.update(
-                source,
-                keypoints,
-                self.odometry.local_map,
-                self.odometry.last_pose,
-                self._vis_infos,
+                source,                  # Frame đã deskew (Màu đỏ)
+                keypoints,               # Điểm dùng để registration (Màu vàng)
+                self.odometry.local_map, # Map
+                self.odometry.last_pose, # Pose
+                vis_infos                # Info dict
             )
+
+        self.visualizer.close()
 
     @staticmethod
     def save_poses_kitti_format(filename: str, poses: np.ndarray):
-        def _to_kitti_format(poses: np.ndarray) -> np.ndarray:
-            return poses[:, :3].reshape(-1, 12)
-
-        np.savetxt(fname=f"{filename}_kitti.txt", X=_to_kitti_format(poses))
+        np.savetxt(fname=f"{filename}_kitti.txt", X=poses[:, :3].reshape(-1, 12))
 
     @staticmethod
     def save_poses_tum_format(filename, poses, timestamps):
-        def _to_tum_format(poses, timestamps):
-            tum_data = np.zeros((len(poses), 8))
+        def _to_tum_format(_poses, _timestamps):
+            tum_data = np.zeros((len(_poses), 8))
             with contextlib.suppress(ValueError):
-                for idx in range(len(poses)):
-                    tx, ty, tz = poses[idx, :3, -1].flatten()
-                    qw, qx, qy, qz = Quaternion(matrix=poses[idx], atol=0.01).elements
-                    tum_data[idx] = np.r_[float(timestamps[idx]), tx, ty, tz, qx, qy, qz, qw]
-                tum_data.flatten()
-                return tum_data.astype(np.float64)
+                for idx in range(len(_poses)):
+                    tx, ty, tz = _poses[idx, :3, -1].flatten()
+                    qw, qx, qy, qz = Quaternion(matrix=_poses[idx], atol=0.01).elements
+                    tum_data[idx] = np.r_[float(_timestamps[idx]), tx, ty, tz, qx, qy, qz, qw]
+            return tum_data.astype(np.float64)
 
         np.savetxt(fname=f"{filename}_tum.txt", X=_to_tum_format(poses, timestamps), fmt="%.4f")
 
@@ -163,7 +145,7 @@ class OdometryPipeline:
         if not self.has_gt:
             return
         self._save_poses(
-            filename=f"{self.results_dir}/{self._dataset.sequence_id}_gt",
+            filename=f"{self.results_dir}/{self.dataset_sequence}_gt",
             poses=self._calibrate_poses(self.gt_poses),
             timestamps=self._get_frames_timestamps(),
         )
@@ -174,7 +156,6 @@ class OdometryPipeline:
         return float(times_nozero.shape[0] / total_time_s) if total_time_s > 0 else 0
 
     def _run_evaluation(self):
-        # Run estimation metrics evaluation, only when GT data was provided
         if self.has_gt:
             avg_tra, avg_rot = sequence_error(self.gt_poses, self.poses)
             ate_rot, ate_trans = absolute_trajectory_error(self.gt_poses, self.poses)
@@ -183,13 +164,14 @@ class OdometryPipeline:
             self.results.append(desc="Absolute Trajectory Error (ATE)", units="m", value=ate_trans)
             self.results.append(desc="Absolute Rotational Error (ARE)", units="rad", value=ate_rot)
 
-        # Run timing metrics evaluation, always
         fps = self._get_fps()
         avg_fps = int(np.floor(fps))
         avg_ms = int(np.ceil(1e3 / fps)) if fps > 0 else 0
         if avg_fps > 0:
             self.results.append(desc="Average Frequency", units="Hz", value=avg_fps, trunc=True)
             self.results.append(desc="Average Runtime", units="ms", value=avg_ms, trunc=True)
+
+        self.results.append(desc="Number of closures found", units="closures", value=0, trunc=True)
 
     def _write_log(self):
         if not self.results.empty():
@@ -203,15 +185,56 @@ class OdometryPipeline:
 
     @staticmethod
     def _get_results_dir(out_dir: str):
-        def get_current_timestamp() -> str:
-            return datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        results_dir = os.path.join(os.path.realpath(out_dir), get_current_timestamp())
+        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        results_dir = os.path.join(os.path.realpath(out_dir), now)
         latest_dir = os.path.join(os.path.realpath(out_dir), "latest")
         os.makedirs(results_dir, exist_ok=True)
-        os.unlink(latest_dir) if os.path.exists(latest_dir) or os.path.islink(latest_dir) else None
+        if os.path.exists(latest_dir) or os.path.islink(latest_dir):
+            os.unlink(latest_dir)
         os.symlink(results_dir, latest_dir)
         return results_dir
 
     def _create_output_dir(self):
         self.results_dir = self._get_results_dir(self.config.out_dir)
+
+    # --- CÁC HÀM MỚI TỪ GENZ ---
+    
+    def _write_graph(self):
+        graph_file = os.path.join(self.results_dir, "trajectory.g2o")
+        poses = self._calibrate_poses(self.poses)
+        with open(graph_file, "w") as f:
+            for idx, pose in enumerate(poses):
+                tx, ty, tz = pose[:3, 3]
+                qw, qx, qy, qz = Quaternion(matrix=pose, atol=0.01).elements
+                f.write(f"VERTEX_SE3:QUAT {idx} {tx} {ty} {tz} {qx} {qy} {qz} {qw}\n")
+            for idx in range(len(poses) - 1):
+                rel = np.linalg.inv(poses[idx]) @ poses[idx + 1]
+                tx, ty, tz = rel[:3, 3]
+                qw, qx, qy, qz = Quaternion(matrix=rel, atol=0.01).elements
+                info = "1 0 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0 0 1 0 1"
+                f.write(f"EDGE_SE3:QUAT {idx} {idx+1} {tx} {ty} {tz} {qx} {qy} {qz} {qw} {info}\n")
+
+    def _write_trajectory_plot(self):
+        try:
+            import matplotlib.pyplot as plt
+        except Exception:
+            return
+        poses = self._calibrate_poses(self.poses)
+        plt.figure(figsize=(8, 8))
+        plt.plot(poses[:, 0, 3], poses[:, 1, 3], "b-", linewidth=1.5, label="estimated")
+        if self.has_gt:
+            gt = self._calibrate_poses(self.gt_poses)
+            plt.plot(gt[:, 0, 3], gt[:, 1, 3], "g--", linewidth=1.0, label="gt")
+        plt.xlabel("x [m]")
+        plt.ylabel("y [m]")
+        plt.axis("equal")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.results_dir, "trajectory.png"), dpi=300)
+        plt.close()
+
+    def _write_local_maps(self):
+        local_maps_dir = os.path.join(self.results_dir, "local_maps")
+        os.makedirs(local_maps_dir, exist_ok=True)
+        # Lưu bản đồ local từ C++
+        np.save(os.path.join(local_maps_dir, "local_map_final.npy"), self.odometry.local_map)
