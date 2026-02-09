@@ -1,26 +1,3 @@
-# MIT License
-#
-# Copyright (c) 2022 Ignacio Vizzo, Tiziano Guadagnino, Benedikt Mersch, Cyrill
-# Stachniss.
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-# NOTE: This module was contributed by Markus Pielmeier on PR #63
 from __future__ import annotations
 
 import importlib
@@ -29,6 +6,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Import thư viện C++ binding
+from kiss_icp.pybind import kiss_icp_pybind
 
 from kiss_icp.config.config import (
     AdaptiveThresholdConfig,
@@ -66,12 +46,11 @@ def _yaml_source(config_file: Optional[Path]) -> Dict[str, Any]:
 
 def load_config(config_file: Optional[Path]) -> KISSConfig:
     """Load configuration from an optional yaml file."""
-
     config = KISSConfig(**_yaml_source(config_file))
 
     # Check if there is a possible mistake
     if config.data.max_range < config.data.min_range:
-        print("[WARNING] max_range is smaller than min_range, settng min_range to 0.0")
+        print("[WARNING] max_range is smaller than min_range, setting min_range to 0.0")
         config.data.min_range = 0.0
 
     # Use specified voxel size or compute one using the max range
@@ -88,3 +67,36 @@ def write_config(config: KISSConfig = KISSConfig(), filename: str = "kiss_icp.ya
             yaml.dump(config.model_dump(), outfile, default_flow_style=False)
         except ModuleNotFoundError:
             outfile.write(str(config.model_dump()))
+
+
+# --- HÀM MỚI (Giống to_genz_config) ---
+def to_kiss_config(config: KISSConfig):
+    """
+    Chuyển đổi từ Pydantic Model (Python) sang Struct C++ (_KISSConfig).
+    Cần mapping đúng các trường dữ liệu.
+    """
+    # 1. Khởi tạo struct C++
+    cpp_config = kiss_icp_pybind._KISSConfig()
+    
+    # 2. Gán giá trị (Mapping từ Config lồng nhau sang Config phẳng của C++)
+    
+    # Data Config
+    cpp_config.max_range = config.data.max_range
+    cpp_config.min_range = config.data.min_range
+    cpp_config.deskew = config.data.deskew
+    
+    # Mapping Config
+    # Lưu ý: voxel_size lúc này chắc chắn đã có giá trị (do load_config xử lý rồi)
+    cpp_config.voxel_size = config.mapping.voxel_size
+    cpp_config.max_points_per_voxel = config.mapping.max_points_per_voxel
+    
+    # Adaptive Threshold Config
+    cpp_config.min_motion_th = config.adaptive_threshold.min_motion_th
+    cpp_config.initial_threshold = config.adaptive_threshold.initial_threshold
+    
+    # Registration Config
+    cpp_config.max_num_iterations = config.registration.max_num_iterations
+    cpp_config.convergence_criterion = config.registration.convergence_criterion
+    cpp_config.max_num_threads = config.registration.max_num_threads
+
+    return cpp_config
