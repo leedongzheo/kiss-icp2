@@ -1,41 +1,17 @@
-// MIT License
-//
-// Copyright (c) 2022 Ignacio Vizzo, Tiziano Guadagnino, Benedikt Mersch, Cyrill
-// Stachniss.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
 #include <pybind11/eigen.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-#include <pybind11/stl_bind.h>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry> 
+#include <vector>
 #include <algorithm>
 #include <cmath>
-#include <memory>
-#include <vector>
 
-#include "kiss_icp/core/Preprocessing.hpp"
-#include "kiss_icp/core/Registration.hpp"
-#include "kiss_icp/core/Threshold.hpp"
-#include "kiss_icp/core/VoxelHashMap.hpp"
+// Quan trọng: Include header chứa class KissICP Pipeline
+#include "kiss_icp/pipeline/KissICP.hpp" 
+#include "kiss_icp/core/Preprocessing.hpp" // Cho hàm VoxelDownsample global
 #include "kiss_icp/metrics/Metrics.hpp"
 #include "stl_vector_eigen.h"
 
@@ -46,84 +22,48 @@ PYBIND11_MAKE_OPAQUE(std::vector<Eigen::Vector3d>);
 
 namespace kiss_icp {
 PYBIND11_MODULE(kiss_icp_pybind, m) {
-    auto vector3dvector = pybind_eigen_vector_of_vector<Eigen::Vector3d>(
+    // Helper để chuyển đổi vector Eigen sang Numpy nhanh chóng (như GenZ)
+    pybind_eigen_vector_of_vector<Eigen::Vector3d>(
         m, "_Vector3dVector", "std::vector<Eigen::Vector3d>",
         py::py_array_to_vectors_double<Eigen::Vector3d>);
 
-    // Map representation
-    py::class_<VoxelHashMap> internal_map(m, "_VoxelHashMap", "Don't use this");
-    internal_map
-        .def(py::init<double, double, int>(), "voxel_size"_a, "max_distance"_a,
-             "max_points_per_voxel"_a)
-        .def("_clear", &VoxelHashMap::Clear)
-        .def("_empty", &VoxelHashMap::Empty)
-        .def("_update",
-             py::overload_cast<const std::vector<Eigen::Vector3d> &, const Eigen::Vector3d &>(
-                 &VoxelHashMap::Update),
-             "points"_a, "origin"_a)
-        .def(
-            "_update",
-            [](VoxelHashMap &self, const std::vector<Eigen::Vector3d> &points,
-               const Eigen::Matrix4d &T) {
-                Sophus::SE3d pose(T);
-                self.Update(points, pose);
-            },
-            "points"_a, "pose"_a)
-        .def("_add_points", &VoxelHashMap::AddPoints, "points"_a)
-        .def("_remove_far_away_points", &VoxelHashMap::RemovePointsFarFromLocation, "origin"_a)
-        .def("_point_cloud", &VoxelHashMap::Pointcloud);
+    // 1. Binding Config Struct (Giống _GenZConfig)
+    py::class_<pipeline::KISSConfig>(m, "_KISSConfig")
+        .def(py::init<>())
+        .def_readwrite("voxel_size", &pipeline::KISSConfig::voxel_size)
+        .def_readwrite("max_range", &pipeline::KISSConfig::max_range)
+        .def_readwrite("min_range", &pipeline::KISSConfig::min_range)
+        .def_readwrite("max_points_per_voxel", &pipeline::KISSConfig::max_points_per_voxel)
+        .def_readwrite("min_motion_th", &pipeline::KISSConfig::min_motion_th)
+        .def_readwrite("initial_threshold", &pipeline::KISSConfig::initial_threshold)
+        .def_readwrite("max_num_iterations", &pipeline::KISSConfig::max_num_iterations)
+        .def_readwrite("convergence_criterion", &pipeline::KISSConfig::convergence_criterion)
+        .def_readwrite("max_num_threads", &pipeline::KISSConfig::max_num_threads)
+        .def_readwrite("deskew", &pipeline::KISSConfig::deskew);
 
-    py::class_<Preprocessor> internal_preprocessor(m, "_Preprocessor", "Don't use this");
-    internal_preprocessor
-        .def(py::init<double, double, bool, int>(), "max_range"_a, "min_range"_a, "deskew"_a,
-             "max_num_threads"_a)
-        .def(
-            "_preprocess",
-            [](Preprocessor &self, const std::vector<Eigen::Vector3d> &points,
-               const std::vector<double> &timestamps, const Eigen::Matrix4d &relative_motion) {
-                Sophus::SE3d motion(relative_motion);
-                return self.Preprocess(points, timestamps, motion);
-            },
-            "points"_a, "timestamps"_a, "relative_motion"_a);
+    // 2. Binding Pipeline Class (Giống _GenZICP)
+    // Thay vì binding từng phần lẻ, ta bind class KissICP tổng
+    py::class_<pipeline::KissICP>(m, "_KissICP")
+        .def(py::init<const pipeline::KISSConfig &>(), "config"_a)
+        .def("_register_frame", &pipeline::KissICP::RegisterFrame, "frame"_a, "timestamps"_a)
+        .def("_local_map", &pipeline::KissICP::LocalMap)
+        .def("_voxel_down_sample", &pipeline::KissICP::Voxelize, "frame"_a)
+        .def("_reset", &pipeline::KissICP::Reset)
+        // Helper: Trả về Pose cuối cùng dưới dạng Matrix4d (Numpy) thay vì Sophus
+        .def("_last_pose", [](pipeline::KissICP &self) {
+            return self.pose().matrix();
+        })
+        // Helper: Trả về Delta (Vận tốc) - GenZ không có cái này nhưng KISS có thì cứ giữ
+        .def("_last_delta", [](pipeline::KissICP &self) {
+            return self.delta().matrix();
+        });
 
-    // Point Cloud registration
-    py::class_<Registration> internal_registration(m, "_Registration", "Don't use this");
-    internal_registration
-        .def(py::init<int, double, int>(), "max_num_iterations"_a, "convergence_criterion"_a,
-             "max_num_threads"_a)
-        .def(
-            "_align_points_to_map",
-            [](Registration &self, const std::vector<Eigen::Vector3d> &points,
-               const VoxelHashMap &voxel_map, const Eigen::Matrix4d &T_guess,
-               double max_correspondence_distance, double kernel) {
-                Sophus::SE3d initial_guess(T_guess);
-                return self
-                    .AlignPointsToMap(points, voxel_map, initial_guess, max_correspondence_distance,
-                                      kernel)
-                    .matrix();
-            },
-            "points"_a, "voxel_map"_a, "initial_guess"_a, "max_correspondance_distance"_a,
-            "kernel"_a);
-
-    // AdaptiveThreshold bindings
-    py::class_<AdaptiveThreshold> adaptive_threshold(m, "_AdaptiveThreshold", "Don't use this");
-    adaptive_threshold
-        .def(py::init<double, double, double>(), "initial_threshold"_a, "min_motion_th"_a,
-             "max_range"_a)
-        .def("_compute_threshold", &AdaptiveThreshold::ComputeThreshold)
-        .def(
-            "_update_model_deviation",
-            [](AdaptiveThreshold &self, const Eigen::Matrix4d &T) {
-                Sophus::SE3d model_deviation(T);
-                self.UpdateModelDeviation(model_deviation);
-            },
-            "model_deviation"_a);
-
-    // prerpocessing modules
+    // 3. Global Utility Functions (Giống GenZ)
+    
+    // Hàm Voxel Downsample tiện ích
     m.def("_voxel_down_sample", &VoxelDownsample, "frame"_a, "voxel_size"_a);
-    /// This function only applies for the KITTI dataset, and should NOT be used by any other
-    /// dataset, the original idea and part of the implementation is taking from CT-ICP(Although
-    /// IMLS-SLAM Originally introduced the calibration factor)
+
+    // Hàm Correct KITTI Scan (Dùng Lambda như đã thảo luận trước đó)
     m.def(
         "_correct_kitti_scan",
         [](const std::vector<Eigen::Vector3d> &frame) {
@@ -143,4 +83,4 @@ PYBIND11_MODULE(kiss_icp_pybind, m) {
           "results_poses"_a);
 }
 
-}  // namespace kiss_icp
+} // namespace kiss_icp
