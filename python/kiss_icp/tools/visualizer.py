@@ -26,7 +26,7 @@ from abc import ABC
 
 import numpy as np
 
-# Button names
+# --- BUTTONS & CONFIG (Giống GenZ) ---
 START_BUTTON = " START\n[SPACE]"
 PAUSE_BUTTON = " PAUSE\n[SPACE]"
 NEXT_FRAME_BUTTON = "NEXT FRAME\n\t\t [N]"
@@ -38,10 +38,10 @@ QUIT_BUTTON = "QUIT\n  [Q]"
 
 # Colors
 BACKGROUND_COLOR = [0.0, 0.0, 0.0]
-FRAME_COLOR = [0.8470, 0.1058, 0.3764]
-KEYPOINTS_COLOR = [1, 0.7568, 0.0274]
-LOCAL_MAP_COLOR = [0.0, 0.3019, 0.2509]
-TRAJECTORY_COLOR = [0.1176, 0.5333, 0.8980]
+FRAME_COLOR = [0.8470, 0.1058, 0.3764]       # Đỏ hồng (Source)
+KEYPOINTS_COLOR = [1, 0.7568, 0.0274]        # Vàng (Keypoints)
+LOCAL_MAP_COLOR = [0.0, 0.3019, 0.2509]      # Xanh lá đậm (Map)
+TRAJECTORY_COLOR = [0.1176, 0.5333, 0.8980]  # Xanh dương (Quỹ đạo)
 
 # Size constants
 FRAME_PTS_SIZE = 0.06
@@ -50,11 +50,9 @@ MAP_PTS_SIZE = 0.08
 
 
 class StubVisualizer(ABC):
-    def __init__(self):
-        pass
-
-    def update(self, source, keypoints, target_map, pose, vis_infos):
-        pass
+    def __init__(self): pass
+    def update(self, source, keypoints, target_map, pose, vis_infos): pass
+    def close(self): pass
 
 
 class Kissualizer(StubVisualizer):
@@ -72,8 +70,11 @@ class Kissualizer(StubVisualizer):
         self._frame_size = FRAME_PTS_SIZE
         self._keypoints_size = KEYPOINTS_PTS_SIZE
         self._map_size = MAP_PTS_SIZE
+        
         self._block_execution = True
         self._play_mode = False
+        
+        # Toggles
         self._toggle_frame = True
         self._toggle_keypoints = True
         self._toggle_map = True
@@ -92,11 +93,15 @@ class Kissualizer(StubVisualizer):
         self._vis_infos = dict(sorted(vis_infos.items(), key=lambda item: len(item[0])))
         self._update_geometries(source, keypoints, target_map, pose)
         self._last_pose = pose
+        
         while self._block_execution:
             self._ps.frame_tick()
             if self._play_mode:
                 break
         self._block_execution = not self._block_execution
+        
+    def close(self):
+        self._ps.unshow()
 
     # Private Interface ---------------------------------------------------------------------------
     def _initialize_visualizer(self):
@@ -109,7 +114,7 @@ class Kissualizer(StubVisualizer):
         self._ps.set_build_default_gui_panels(False)
 
     def _update_geometries(self, source, keypoints, target_map, pose):
-        # CURRENT FRAME
+        # 1. CURRENT FRAME (RED)
         frame_cloud = self._ps.register_point_cloud(
             "current_frame",
             source,
@@ -123,7 +128,7 @@ class Kissualizer(StubVisualizer):
             frame_cloud.set_transform(np.eye(4))
         frame_cloud.set_enabled(self._toggle_frame)
 
-        # KEYPOINTS
+        # 2. KEYPOINTS (YELLOW)
         keypoints_cloud = self._ps.register_point_cloud(
             "keypoints", keypoints, color=KEYPOINTS_COLOR, point_render_mode="quad"
         )
@@ -134,10 +139,11 @@ class Kissualizer(StubVisualizer):
             keypoints_cloud.set_transform(np.eye(4))
         keypoints_cloud.set_enabled(self._toggle_keypoints)
 
-        # LOCAL MAP
+        # 3. LOCAL MAP (GREEN)
+        # --- SỬA QUAN TRỌNG: Bỏ .point_cloud() đi vì target_map giờ là Numpy Array ---
         map_cloud = self._ps.register_point_cloud(
             "local_map",
-            target_map.point_cloud(),
+            target_map,  # <-- Đã sửa
             color=LOCAL_MAP_COLOR,
             point_render_mode="quad",
         )
@@ -148,18 +154,19 @@ class Kissualizer(StubVisualizer):
             map_cloud.set_transform(np.linalg.inv(pose))
         map_cloud.set_enabled(self._toggle_map)
 
-        # TRAJECTORY (only visible in global view)
+        # 4. TRAJECTORY (BLUE)
         self._trajectory.append(pose[:3, 3])
         if self._global_view:
             self._register_trajectory()
 
     def _register_trajectory(self):
-        trajectory_cloud = self._ps.register_point_cloud(
-            "trajectory",
-            np.asarray(self._trajectory),
-            color=TRAJECTORY_COLOR,
-        )
-        trajectory_cloud.set_radius(0.3, relative=False)
+        if len(self._trajectory) > 0:
+            trajectory_cloud = self._ps.register_point_cloud(
+                "trajectory",
+                np.asarray(self._trajectory),
+                color=TRAJECTORY_COLOR,
+            )
+            trajectory_cloud.set_radius(0.3, relative=False)
 
     def _unregister_trajectory(self):
         self._ps.remove_point_cloud("trajectory")
@@ -172,7 +179,7 @@ class Kissualizer(StubVisualizer):
 
     def _next_frame_callback(self):
         if self._gui.Button(NEXT_FRAME_BUTTON) or self._gui.IsKeyPressed(self._gui.ImGuiKey_N):
-            self._block_execution = not self._block_execution
+            self._block_execution = False # Cho phép chạy 1 tick
 
     def _screenshot_callback(self):
         if self._gui.Button(SCREENSHOT_BUTTON) or self._gui.IsKeyPressed(self._gui.ImGuiKey_S):
@@ -203,7 +210,7 @@ class Kissualizer(StubVisualizer):
         if changed:
             self._ps.get_point_cloud("current_frame").set_radius(self._frame_size, relative=False)
         self._gui.SameLine()
-        changed, self._toggle_frame = self._gui.Checkbox("Frame Cloud", self._toggle_frame)
+        changed, self._toggle_frame = self._gui.Checkbox("Source (Red)", self._toggle_frame)
         if changed:
             self._ps.get_point_cloud("current_frame").set_enabled(self._toggle_frame)
 
@@ -214,7 +221,7 @@ class Kissualizer(StubVisualizer):
         if changed:
             self._ps.get_point_cloud("keypoints").set_radius(self._keypoints_size, relative=False)
         self._gui.SameLine()
-        changed, self._toggle_keypoints = self._gui.Checkbox("Keypoints", self._toggle_keypoints)
+        changed, self._toggle_keypoints = self._gui.Checkbox("Keypoints (Yellow)", self._toggle_keypoints)
         if changed:
             self._ps.get_point_cloud("keypoints").set_enabled(self._toggle_keypoints)
 
@@ -225,7 +232,7 @@ class Kissualizer(StubVisualizer):
         if changed:
             self._ps.get_point_cloud("local_map").set_radius(self._map_size, relative=False)
         self._gui.SameLine()
-        changed, self._toggle_map = self._gui.Checkbox("Local Map", self._toggle_map)
+        changed, self._toggle_map = self._gui.Checkbox("Map (Green)", self._toggle_map)
         if changed:
             self._ps.get_point_cloud("local_map").set_enabled(self._toggle_map)
 
@@ -241,6 +248,7 @@ class Kissualizer(StubVisualizer):
         button_name = LOCAL_VIEW_BUTTON if self._global_view else GLOBAL_VIEW_BUTTON
         if self._gui.Button(button_name) or self._gui.IsKeyPressed(self._gui.ImGuiKey_G):
             self._global_view = not self._global_view
+            inv_pose = np.linalg.inv(self._last_pose)
             if self._global_view:
                 self._ps.get_point_cloud("current_frame").set_transform(self._last_pose)
                 self._ps.get_point_cloud("keypoints").set_transform(self._last_pose)
@@ -249,7 +257,7 @@ class Kissualizer(StubVisualizer):
             else:
                 self._ps.get_point_cloud("current_frame").set_transform(np.eye(4))
                 self._ps.get_point_cloud("keypoints").set_transform(np.eye(4))
-                self._ps.get_point_cloud("local_map").set_transform(np.linalg.inv(self._last_pose))
+                self._ps.get_point_cloud("local_map").set_transform(inv_pose)
                 self._unregister_trajectory()
             self._ps.reset_camera_to_home_view()
 
@@ -267,17 +275,23 @@ class Kissualizer(StubVisualizer):
             os._exit(0)
 
     def _trajectory_pick_callback(self):
+        # (Giữ nguyên logic click chuột)
         if self._gui.GetIO().MouseClicked[0]:
             pick_selection = self._ps.get_selection()
             name = pick_selection.structure_name
             if name == "trajectory" and self._ps.has_point_cloud(name):
-                pose = self._trajectory[pick_selection.structure_data["index"]]
-                self._selected_pose = f"x: {pose[0]:7.3f}, y: {pose[1]:7.3f}, z: {pose[2]:7.3f}>"
+                # Chỉ xử lý khi trajectory tồn tại
+                try:
+                    idx = pick_selection.structure_data["index"]
+                    if idx < len(self._trajectory):
+                        pose = self._trajectory[idx]
+                        self._selected_pose = f"x: {pose[0]:7.3f}, y: {pose[1]:7.3f}, z: {pose[2]:7.3f}>"
+                except:
+                     self._selected_pose = ""
             else:
                 self._selected_pose = ""
 
     def _main_gui_callback(self):
-        # GUI callbacks
         self._start_pause_callback()
         if not self._play_mode:
             self._gui.SameLine()
@@ -294,6 +308,4 @@ class Kissualizer(StubVisualizer):
         self._center_viewpoint_callback()
         self._gui.Separator()
         self._quit_callback()
-
-        # Mouse callbacks
         self._trajectory_pick_callback()
