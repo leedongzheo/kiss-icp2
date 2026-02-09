@@ -4,7 +4,7 @@ import importlib
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
-
+from kiss_icp.kiss_icp import KISSConfig as KISSRuntimeConfig
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Import thư viện C++ binding
@@ -70,7 +70,7 @@ def write_config(config: KISSConfig = KISSConfig(), filename: str = "kiss_icp.ya
 
 
 # --- HÀM MỚI (Giống to_genz_config) ---
-def to_kiss_config(config: KISSConfig):
+def to_kiss_config(config: KISSConfig) -> KISSRuntimeConfig:
     """
     Chuyển đổi từ Pydantic Model (Python) sang Struct C++ (_KISSConfig).
     Cần mapping đúng các trường dữ liệu.
@@ -99,4 +99,15 @@ def to_kiss_config(config: KISSConfig):
     cpp_config.convergence_criterion = config.registration.convergence_criterion
     cpp_config.max_num_threads = config.registration.max_num_threads
 
-    return cpp_config
+    return KISSRuntimeConfig(
+        max_range=config.data.max_range,
+        min_range=config.data.min_range,
+        deskew=config.data.deskew,
+        voxel_size=config.mapping.voxel_size,
+        max_points_per_voxel=config.mapping.max_points_per_voxel,
+        min_motion_th=config.adaptive_threshold.min_motion_th,
+        initial_threshold=config.adaptive_threshold.initial_threshold,
+        max_num_iterations=config.registration.max_num_iterations,
+        convergence_criterion=config.registration.convergence_criterion,
+        max_num_threads=config.registration.max_num_threads,
+    )
