@@ -40,14 +40,9 @@ PYBIND11_MODULE(kiss_icp_pybind, m) {
         .def_readwrite("convergence_criterion", &pipeline::KISSConfig::convergence_criterion)
         .def_readwrite("max_num_threads", &pipeline::KISSConfig::max_num_threads)
         .def_readwrite("deskew", &pipeline::KISSConfig::deskew)
-        // [THÊM MỚI] Expose 3 tham số Adaptive Threshold cho Python
-        .def_readwrite("adaptive_base", &pipeline::KISSConfig::adaptive_base)
-        .def_readwrite("min_planarity_thr", &pipeline::KISSConfig::min_planarity_thr)
-        .def_readwrite("max_planarity_thr", &pipeline::KISSConfig::max_planarity_thr)
-        // [THÊM MỚI] Expose biến reg_mode cho Python
-        .def_readwrite("reg_mode", &pipeline::KISSConfig::reg_mode);
 
     // 2. Binding Pipeline Class (Giống _GenZICP)
+    // Thay vì binding từng phần lẻ, ta bind class KissICP tổng
     py::class_<pipeline::KissICP>(m, "_KissICP")
         .def(py::init<const pipeline::KISSConfig &>(), "config"_a)
         .def("_register_frame", &pipeline::KissICP::RegisterFrame, "frame"_a, "timestamps"_a)
@@ -58,7 +53,7 @@ PYBIND11_MODULE(kiss_icp_pybind, m) {
         .def("_last_pose", [](pipeline::KissICP &self) {
             return self.pose().matrix();
         })
-        // Helper: Trả về Delta (Vận tốc)
+        // Helper: Trả về Delta (Vận tốc) - GenZ không có cái này nhưng KISS có thì cứ giữ
         .def("_last_delta", [](pipeline::KissICP &self) {
             return self.delta().matrix();
         });
@@ -68,7 +63,7 @@ PYBIND11_MODULE(kiss_icp_pybind, m) {
     // Hàm Voxel Downsample tiện ích
     m.def("_voxel_down_sample", &VoxelDownsample, "frame"_a, "voxel_size"_a);
 
-    // Hàm Correct KITTI Scan (Dùng Lambda)
+    // Hàm Correct KITTI Scan (Dùng Lambda như đã thảo luận trước đó)
     m.def(
         "_correct_kitti_scan",
         [](const std::vector<Eigen::Vector3d> &frame) {
