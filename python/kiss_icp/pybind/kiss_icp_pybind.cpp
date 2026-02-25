@@ -39,7 +39,7 @@ PYBIND11_MODULE(kiss_icp_pybind, m) {
         .def_readwrite("max_num_iterations", &pipeline::KISSConfig::max_num_iterations)
         .def_readwrite("convergence_criterion", &pipeline::KISSConfig::convergence_criterion)
         .def_readwrite("max_num_threads", &pipeline::KISSConfig::max_num_threads)
-        .def_readwrite("deskew", &pipeline::KISSConfig::deskew)
+        .def_readwrite("deskew", &pipeline::KISSConfig::deskew);
 
     // 2. Binding Pipeline Class (Giống _GenZICP)
     // Thay vì binding từng phần lẻ, ta bind class KissICP tổng
